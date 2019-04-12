@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"golang.org/x/sys/unix"
 
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,20 +16,6 @@ import (
 
 	lxc "gopkg.in/lxc/go-lxc.v2"
 )
-
-var syncFifoWaitHook = []byte(`
-#!/bin/bash
-log=/var/lib/lxc/$LXC_NAME/syncfifo-hook-log-$(date --iso-8601=s)
-
-fifo=/var/lib/lxc/$LXC_NAME/syncfifo
-[ -p $fifo ] || {
-    echo "error: $fifo not found or not a fifo"
-    exit 1
-}
-echo "started, waiting on $fifo" >$log
-echo "ready">$fifo
-echo "done, $fifo was read from">>$log
-`)
 
 var createCmd = cli.Command{
 	Name:      "create",
@@ -85,16 +70,6 @@ func doCreate(ctx *cli.Context) error {
 		return errors.Wrap(err, "failed to create container dir")
 	}
 
-	syncFifoWaitHookFilename := filepath.Join(LXC_PATH, containerID, "sync-fifo-wait")
-	if err := ioutil.WriteFile(syncFifoWaitHookFilename, syncFifoWaitHook, 0777); err != nil {
-		return errors.Wrap(err, "failed to write sync hook")
-	}
-
-	// add start-host hook to block on the syncfifo until `crio-lxc start`
-	if err := c.SetConfigItem("lxc.hook.start-host", syncFifoWaitHookFilename); err != nil { // TODO fix to start-host
-		return errors.Wrap(err, "failed to set lxc.hook.start-host")
-	}
-
 	if err := makeSyncFifo(filepath.Join(LXC_PATH, containerID)); err != nil {
 		return errors.Wrap(err, "failed to make sync fifo")
 	}
@@ -143,6 +118,11 @@ func configureContainer(ctx *cli.Context, c *lxc.Container, spec *specs.Spec) er
 		if err := c.SetConfigItem("lxc.mount.entry", mnt); err != nil {
 			return errors.Wrap(err, "failed to set mount config")
 		}
+	}
+
+	mnt := fmt.Sprintf("/var/lib/lxc/%s/syncfifo syncfifo none ro,bind,create=file", c.Name())
+	if err := c.SetConfigItem("lxc.mount.entry", mnt); err != nil {
+		return errors.Wrap(err, "failed to set syncfifo mount config entry")
 	}
 
 	if err := c.SetConfigItem("lxc.init.cwd", spec.Process.Cwd); err != nil {
