@@ -188,7 +188,7 @@ func startContainer(c *lxc.Container, spec *specs.Spec) error {
 		cmd.Stderr = os.Stderr
 	}
 
-	cmdErr := cmd.Run()
+	cmdErr := cmd.Start()
 
 	return cmdErr
 
